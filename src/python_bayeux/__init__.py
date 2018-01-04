@@ -51,6 +51,8 @@ class BayeuxClient(object):
             requests.Session() if oauth_session is None else oauth_session
         self.shutdown_called = False
 
+        self.connect_timeout = None
+
         # Inbound
         self.message_queue = gevent.queue.Queue()
 
@@ -102,17 +104,6 @@ class BayeuxClient(object):
         # TODO: No error checking here
         self.client_id = handshake_response[0]['clientId']
 
-        # Connect one time to get the server's timeout advive
-        initial_connect_response = self.connect(initial=True)
-        initial_connect_response_payload = initial_connect_response[0]
-
-        # TODO: handle other 'reconnect' values
-        if initial_connect_response_payload['successful']:
-            # Convert to seconds
-            self.connect_timeout = \
-                initial_connect_response_payload['advice']['timeout'] / 1000.0
-        # TODO: if not successful, then what?
-
     def disconnect(self):
         return self._send_message({
             # MUST
@@ -143,6 +134,10 @@ class BayeuxClient(object):
 
         return connect_response
 
+    def _handle_advice(self, advice):
+        if 'timeout' in advice:
+            self.connect_timeout = advice['timeout'] / 1000.0
+
     def _send_message(self, payload, **kwargs):
         if 'id' in payload:
             payload['id'] = str(self.message_counter)
@@ -170,7 +165,13 @@ class BayeuxClient(object):
             )
         )
 
-        return response.json()
+        res = response.json()
+
+        advice = res[0].get('advice')
+        if advice:
+            self._handle_advice(advice)
+
+        return res
 
     def _connect_greenlet(self):
         connect_response = None
